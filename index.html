@@ -35,6 +35,14 @@
   #load-btn:hover { background: #5a80b8; }
   #file-input { display: none; }
 
+  #sample-btn {
+    padding: 7px 16px;
+    background: #5a4a8a;
+    border: none; border-radius: 6px;
+    color: #fff; cursor: pointer; font-size: 0.9em;
+  }
+  #sample-btn:hover { background: #6a5a9a; }
+
   #main {
     display: flex;
     gap: 16px;
@@ -421,6 +429,7 @@
   <h1>Chess</h1>
   <button id="load-btn" onclick="document.getElementById('file-input').click()">Load PGN</button>
   <input type="file" id="file-input" accept=".pgn" onchange="loadPGN(event)">
+  <button id="sample-btn" onclick="loadSamplePGN()">Sample Games</button>
   <button id="library-btn" onclick="openLibrary()">Library</button>
   <div id="user-menu-wrap">
     <button id="login-btn" onclick="loginBtnClick()">Login</button>
@@ -742,6 +751,19 @@ let parsedGames = [];
 let viewPositions = [];
 let viewMoveIdx = 0;
 let viewGameMoves = [];
+
+function loadSamplePGN() {
+  fetch('sample.pgn')
+    .then(r => r.text())
+    .then(text => {
+      currentPGNRaw = text;
+      parsedGames = parsePGN(text);
+      moveTree = buildMoveTree(parsedGames);
+      renderGameList();
+      document.getElementById('games-panel').classList.add('visible');
+      if (parsedGames.length > 0) loadGame(0);
+    });
+}
 
 function loadPGN(event) {
   const file = event.target.files[0];
