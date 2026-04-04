@@ -351,6 +351,18 @@
   .lib-rename:hover { background: #3a4a3a; }
   .lib-del { background: #4a2a2a; color: #dcc; }
   .lib-del:hover { background: #6a3a3a; }
+  .lib-check { accent-color: #4a6fa5; width: 14px; height: 14px; cursor: pointer; flex-shrink: 0; }
+  #lib-merge-bar {
+    display: none; padding: 8px 16px; border-bottom: 1px solid #2a2a4e;
+    align-items: center; gap: 10px;
+  }
+  #lib-merge-bar.visible { display: flex; }
+  #lib-merge-count { font-size: 0.8em; color: #aaa; flex: 1; }
+  #lib-merge-btn {
+    padding: 5px 14px; border: none; border-radius: 4px;
+    background: #4a6fa5; color: #fff; cursor: pointer; font-size: 0.8em;
+  }
+  #lib-merge-btn:hover { background: #5a80b8; }
 
   /* ── Login / account ── */
   #login-btn {
@@ -493,6 +505,10 @@
     <div id="library-modal-header">
       <h2>PGN Library</h2>
       <button id="library-close" onclick="closeLibrary()">&#x2715;</button>
+    </div>
+    <div id="lib-merge-bar">
+      <span id="lib-merge-count"></span>
+      <button id="lib-merge-btn" onclick="mergeSelected()">Merge into new</button>
     </div>
     <div id="library-list"></div>
   </div>
@@ -1670,6 +1686,7 @@ function closeLibrary() {
 }
 
 function renderLibraryList() {
+  document.getElementById('lib-merge-bar').classList.remove('visible');
   const list = document.getElementById('library-list');
   if (!db) {
     list.innerHTML = '<div id="library-empty">Library unavailable (IndexedDB not supported).</div>';
@@ -1689,6 +1706,7 @@ function renderLibraryList() {
       div.className = 'lib-item';
       const date = new Date(item.createdAt).toLocaleDateString();
       div.innerHTML = `
+        <input type="checkbox" class="lib-check" data-id="${item.id}" onchange="updateMergeBar()">
         <div class="lib-item-info">
           <div class="lib-label" id="lib-label-${item.id}">${escapeHtml(item.label)}</div>
           <div class="lib-meta">${item.gameCount} game${item.gameCount !== 1 ? 's' : ''} &middot; ${date}</div>
@@ -1700,6 +1718,53 @@ function renderLibraryList() {
       list.appendChild(div);
     }
   };
+}
+
+function updateMergeBar() {
+  const checked = document.querySelectorAll('.lib-check:checked');
+  const bar = document.getElementById('lib-merge-bar');
+  if (checked.length >= 2) {
+    bar.classList.add('visible');
+    document.getElementById('lib-merge-count').textContent = `${checked.length} selected`;
+  } else {
+    bar.classList.remove('visible');
+  }
+}
+
+function mergeSelected() {
+  const checked = [...document.querySelectorAll('.lib-check:checked')];
+  if (checked.length < 2) return;
+  const ids = checked.map(cb => Number(cb.dataset.id));
+  const tx = db.transaction('collections', 'readonly');
+  const store = tx.objectStore('collections');
+  const results = [];
+  let pending = ids.length;
+  for (const id of ids) {
+    store.get(id).onsuccess = e => {
+      if (e.target.result) results.push(e.target.result);
+      if (--pending === 0) doMerge(results, ids);
+    };
+  }
+}
+
+function doMerge(items, ids) {
+  // Sort by original save order (ascending id = oldest first)
+  items.sort((a, b) => a.id - b.id);
+  const mergedPGN = items.map(i => i.pgn.trim()).join('\n\n');
+  const totalGames = items.reduce((s, i) => s + i.gameCount, 0);
+  const names = items.map(i => i.label).join(' + ');
+  const defaultLabel = `Merged (${totalGames} games)`;
+  const label = prompt('Label for merged collection:', defaultLabel);
+  if (label === null) return;
+  const entry = {
+    label: label.trim() || defaultLabel,
+    pgn: mergedPGN,
+    gameCount: totalGames,
+    createdAt: Date.now()
+  };
+  dbTx('readwrite', store => {
+    store.add(entry).onsuccess = () => renderLibraryList();
+  });
 }
 
 function escapeHtml(s) {
