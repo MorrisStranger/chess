@@ -351,6 +351,60 @@
   .lib-rename:hover { background: #3a4a3a; }
   .lib-del { background: #4a2a2a; color: #dcc; }
   .lib-del:hover { background: #6a3a3a; }
+
+  /* ── Login / account ── */
+  #login-btn {
+    padding: 7px 16px;
+    background: #2a2a4e;
+    border: 1px solid #4a4a7a; border-radius: 6px;
+    color: #aac; cursor: pointer; font-size: 0.9em;
+  }
+  #login-btn:hover { background: #3a3a6a; }
+  #user-menu-wrap { position: relative; }
+  #user-menu {
+    display: none; position: absolute; top: calc(100% + 6px); right: 0;
+    background: #16213e; border: 1px solid #2a2a4e; border-radius: 6px;
+    min-width: 120px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); z-index: 200;
+  }
+  #user-menu.open { display: block; }
+  #user-menu button {
+    display: block; width: 100%; padding: 9px 16px;
+    background: none; border: none; color: #ccc;
+    text-align: left; cursor: pointer; font-size: 0.85em;
+  }
+  #user-menu button:hover { background: #2a3a5a; color: #fff; }
+  /* ── Login modal ── */
+  #login-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.75); z-index: 300;
+    align-items: center; justify-content: center;
+  }
+  #login-overlay.open { display: flex; }
+  #login-modal {
+    background: #16213e; border-radius: 10px;
+    width: 380px; padding: 28px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+  }
+  #login-modal h2 { margin: 0 0 6px; font-size: 1em; color: #ccc; }
+  #login-modal p { margin: 0 0 14px; font-size: 0.78em; color: #666; line-height: 1.5; }
+  #login-modal p a { color: #7ab; }
+  #login-token-input {
+    width: 100%; padding: 8px 10px; border-radius: 5px;
+    border: 1px solid #3a4a6a; background: #0d1526; color: #ddd;
+    font-size: 0.85em; font-family: monospace; margin-bottom: 10px;
+  }
+  #login-error { font-size: 0.78em; color: #e88; min-height: 1.2em; margin-bottom: 10px; }
+  #login-modal-btns { display: flex; gap: 8px; justify-content: flex-end; }
+  #login-modal-btns button {
+    padding: 7px 18px; border: none; border-radius: 5px;
+    cursor: pointer; font-size: 0.85em;
+  }
+  #login-cancel { background: #2a2a4e; color: #aaa; }
+  #login-cancel:hover { background: #3a3a5e; }
+  #login-submit { background: #4a6fa5; color: #fff; }
+  #login-submit:hover { background: #5a80b8; }
+  /* cloud badge on lib items */
+  .lib-cloud { font-size: 0.68em; color: #7ab; margin-left: 4px; }
 </style>
 </head>
 <body>
@@ -360,6 +414,12 @@
   <button id="load-btn" onclick="document.getElementById('file-input').click()">Load PGN</button>
   <input type="file" id="file-input" accept=".pgn" onchange="loadPGN(event)">
   <button id="library-btn" onclick="openLibrary()">Library</button>
+  <div id="user-menu-wrap">
+    <button id="login-btn" onclick="loginBtnClick()">Login</button>
+    <div id="user-menu">
+      <button onclick="logout()">Logout</button>
+    </div>
+  </div>
 </header>
 
 <div id="main">
@@ -415,6 +475,22 @@
   <div id="explorer-panel">
     <h3 id="explorer-title">Opening Explorer</h3>
     <div id="explorer-body"></div>
+  </div>
+</div>
+
+<!-- Login modal -->
+<div id="login-overlay" onclick="if(event.target===this)closeLoginModal()">
+  <div id="login-modal">
+    <h2>Login with GitHub</h2>
+    <p>Enter a GitHub Personal Access Token with <strong>gist</strong> scope.<br>
+    Your PGN library will be stored in a private Gist.<br>
+    <a href="https://github.com/settings/tokens/new?scopes=gist&description=Chess+PGN+Library" target="_blank">Create a token &rarr;</a></p>
+    <input type="password" id="login-token-input" placeholder="ghp_..." autocomplete="off">
+    <div id="login-error"></div>
+    <div id="login-modal-btns">
+      <button id="login-cancel" onclick="closeLoginModal()">Cancel</button>
+      <button id="login-submit" onclick="doLogin()">Login</button>
+    </div>
   </div>
 </div>
 
@@ -1491,6 +1567,168 @@ function renderExplorer() {
   }
 }
 
+// ── Account / GitHub Gists ────────────────────────────────────
+
+let ghToken    = localStorage.getItem('gh_token')    || null;
+let ghUsername = localStorage.getItem('gh_username') || null;
+let ghGistId   = localStorage.getItem('gh_gist_id')  || null;
+let cloudCollections = null; // in-memory cache when logged in
+
+function isLoggedIn() { return !!ghToken; }
+
+function updateLoginUI() {
+  const btn = document.getElementById('login-btn');
+  if (isLoggedIn()) {
+    btn.textContent = ghUsername;
+  } else {
+    btn.textContent = 'Login';
+  }
+}
+
+function loginBtnClick() {
+  if (isLoggedIn()) {
+    document.getElementById('user-menu').classList.toggle('open');
+  } else {
+    openLoginModal();
+  }
+}
+
+document.addEventListener('click', e => {
+  const wrap = document.getElementById('user-menu-wrap');
+  if (wrap && !wrap.contains(e.target)) {
+    document.getElementById('user-menu').classList.remove('open');
+  }
+});
+
+function openLoginModal() {
+  document.getElementById('login-overlay').classList.add('open');
+  document.getElementById('login-token-input').value = '';
+  document.getElementById('login-error').textContent = '';
+}
+
+function closeLoginModal() {
+  document.getElementById('login-overlay').classList.remove('open');
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && document.getElementById('login-overlay').classList.contains('open')) {
+    doLogin();
+  }
+});
+
+async function doLogin() {
+  const token = document.getElementById('login-token-input').value.trim();
+  if (!token) return;
+  const errEl = document.getElementById('login-error');
+  const submitBtn = document.getElementById('login-submit');
+  errEl.textContent = 'Verifying…';
+  submitBtn.disabled = true;
+  try {
+    const res = await fetch('https://api.github.com/user', {
+      headers: { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github.v3+json' }
+    });
+    if (!res.ok) throw new Error('Token rejected by GitHub');
+    const user = await res.json();
+    ghToken    = token;
+    ghUsername = user.login;
+    localStorage.setItem('gh_token',    ghToken);
+    localStorage.setItem('gh_username', ghUsername);
+    await findGist();
+    cloudCollections = null; // will refresh on next library open
+    closeLoginModal();
+    updateLoginUI();
+  } catch(e) {
+    errEl.textContent = 'Login failed: ' + e.message;
+  } finally {
+    submitBtn.disabled = false;
+  }
+}
+
+async function findGist() {
+  // Search the user's gists for the chess library gist
+  let page = 1;
+  while (true) {
+    const res = await fetch(`https://api.github.com/gists?per_page=100&page=${page}`, {
+      headers: { 'Authorization': `token ${ghToken}`, 'Accept': 'application/vnd.github.v3+json' }
+    });
+    if (!res.ok) break;
+    const gists = await res.json();
+    if (!gists.length) break;
+    const found = gists.find(g => g.description === 'Chess PGN Library' && g.files['chess-pgn-library.json']);
+    if (found) {
+      ghGistId = found.id;
+      localStorage.setItem('gh_gist_id', ghGistId);
+      return;
+    }
+    if (gists.length < 100) break;
+    page++;
+  }
+  ghGistId = null;
+  localStorage.removeItem('gh_gist_id');
+}
+
+async function fetchCloudCollections() {
+  if (!ghToken) return null;
+  if (!ghGistId) return [];
+  const res = await fetch(`https://api.github.com/gists/${ghGistId}`, {
+    headers: { 'Authorization': `token ${ghToken}`, 'Accept': 'application/vnd.github.v3+json' }
+  });
+  if (!res.ok) return [];
+  const gist = await res.json();
+  const content = gist.files['chess-pgn-library.json']?.content;
+  if (!content) return [];
+  try {
+    return JSON.parse(content).collections || [];
+  } catch { return []; }
+}
+
+async function pushCloudCollections(collections) {
+  if (!ghToken) return;
+  const content = JSON.stringify({ collections }, null, 2);
+  if (!ghGistId) {
+    const res = await fetch('https://api.github.com/gists', {
+      method: 'POST',
+      headers: {
+        'Authorization': `token ${ghToken}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        description: 'Chess PGN Library',
+        public: false,
+        files: { 'chess-pgn-library.json': { content } }
+      })
+    });
+    if (res.ok) {
+      const gist = await res.json();
+      ghGistId = gist.id;
+      localStorage.setItem('gh_gist_id', ghGistId);
+    }
+  } else {
+    await fetch(`https://api.github.com/gists/${ghGistId}`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `token ${ghToken}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        files: { 'chess-pgn-library.json': { content } }
+      })
+    });
+  }
+}
+
+function logout() {
+  ghToken = ghUsername = ghGistId = null;
+  cloudCollections = null;
+  localStorage.removeItem('gh_token');
+  localStorage.removeItem('gh_username');
+  localStorage.removeItem('gh_gist_id');
+  updateLoginUI();
+  document.getElementById('user-menu').classList.remove('open');
+}
+
 // ── PGN Library (IndexedDB) ───────────────────────────────────
 
 let currentPGNRaw = '';
@@ -1512,63 +1750,104 @@ function dbTx(mode, fn) {
   fn(tx.objectStore('collections'));
 }
 
-function saveToLibrary() {
+async function saveToLibrary() {
   if (!parsedGames.length || !currentPGNRaw) return;
   const defaultLabel = `Collection (${parsedGames.length} game${parsedGames.length > 1 ? 's' : ''})`;
   const label = prompt('Label for this collection:', defaultLabel);
-  if (label === null) return; // cancelled
+  if (label === null) return;
   const entry = {
+    id: Date.now(),
     label: label.trim() || defaultLabel,
     pgn: currentPGNRaw,
     gameCount: parsedGames.length,
     createdAt: Date.now()
   };
-  dbTx('readwrite', store => {
-    const req = store.add(entry);
-    req.onsuccess = () => { alert(`Saved "${entry.label}" to library.`); };
-  });
+  if (isLoggedIn()) {
+    if (!cloudCollections) cloudCollections = await fetchCloudCollections();
+    cloudCollections.unshift(entry);
+    await pushCloudCollections(cloudCollections);
+    alert(`Saved "${entry.label}" to your GitHub library.`);
+  } else {
+    dbTx('readwrite', store => {
+      const req = store.add(entry);
+      req.onsuccess = () => { alert(`Saved "${entry.label}" to library.`); };
+    });
+  }
 }
 
-function openLibrary() {
+async function openLibrary() {
   document.getElementById('library-overlay').classList.add('open');
-  renderLibraryList();
+  await renderLibraryList();
 }
 
 function closeLibrary() {
   document.getElementById('library-overlay').classList.remove('open');
 }
 
-function renderLibraryList() {
+async function renderLibraryList() {
   const list = document.getElementById('library-list');
-  if (!db) {
-    list.innerHTML = '<div id="library-empty">Library unavailable (IndexedDB not supported).</div>';
-    return;
-  }
-  const tx = db.transaction('collections', 'readonly');
-  const req = tx.objectStore('collections').getAll();
-  req.onsuccess = e => {
-    const items = e.target.result.reverse(); // newest first
-    if (!items.length) {
-      list.innerHTML = '<div id="library-empty">No saved collections yet.<br>Load a PGN and click Save.</div>';
+  if (isLoggedIn()) {
+    list.innerHTML = '<div id="library-empty">Loading from GitHub…</div>';
+    cloudCollections = await fetchCloudCollections();
+    renderCloudList(list, cloudCollections);
+  } else {
+    if (!db) {
+      list.innerHTML = '<div id="library-empty">Library unavailable (IndexedDB not supported).</div>';
       return;
     }
-    list.innerHTML = '';
-    for (const item of items) {
-      const div = document.createElement('div');
-      div.className = 'lib-item';
-      const date = new Date(item.createdAt).toLocaleDateString();
-      div.innerHTML = `
-        <div class="lib-item-info">
-          <div class="lib-label" id="lib-label-${item.id}">${escapeHtml(item.label)}</div>
-          <div class="lib-meta">${item.gameCount} game${item.gameCount !== 1 ? 's' : ''} &middot; ${date}</div>
-        </div>
-        <button class="lib-btn lib-load" onclick="loadFromLibrary(${item.id})">Load</button>
-        <button class="lib-btn lib-rename" onclick="renameCollection(${item.id})">Rename</button>
-        <button class="lib-btn lib-del" onclick="deleteFromLibrary(${item.id})">Delete</button>
-      `;
-      list.appendChild(div);
-    }
-  };
+    const tx = db.transaction('collections', 'readonly');
+    const req = tx.objectStore('collections').getAll();
+    req.onsuccess = e => {
+      const items = e.target.result.reverse();
+      renderItemList(list, items, false);
+    };
+  }
+}
+
+function renderCloudList(list, items) {
+  if (!items.length) {
+    list.innerHTML = '<div id="library-empty">No saved collections yet.<br>Load a PGN and click Save.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  for (const item of items) {
+    const div = document.createElement('div');
+    div.className = 'lib-item';
+    const date = new Date(item.createdAt).toLocaleDateString();
+    div.innerHTML = `
+      <div class="lib-item-info">
+        <div class="lib-label" id="lib-label-${item.id}">${escapeHtml(item.label)}<span class="lib-cloud">&#9729; cloud</span></div>
+        <div class="lib-meta">${item.gameCount} game${item.gameCount !== 1 ? 's' : ''} &middot; ${date}</div>
+      </div>
+      <button class="lib-btn lib-load" onclick="loadFromLibrary(${item.id})">Load</button>
+      <button class="lib-btn lib-rename" onclick="renameCollection(${item.id})">Rename</button>
+      <button class="lib-btn lib-del" onclick="deleteFromLibrary(${item.id})">Delete</button>
+    `;
+    list.appendChild(div);
+  }
+}
+
+function renderItemList(list, items, isCloud) {
+  if (!items.length) {
+    list.innerHTML = '<div id="library-empty">No saved collections yet.<br>Load a PGN and click Save.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  for (const item of items) {
+    const div = document.createElement('div');
+    div.className = 'lib-item';
+    const date = new Date(item.createdAt).toLocaleDateString();
+    div.innerHTML = `
+      <div class="lib-item-info">
+        <div class="lib-label" id="lib-label-${item.id}">${escapeHtml(item.label)}</div>
+        <div class="lib-meta">${item.gameCount} game${item.gameCount !== 1 ? 's' : ''} &middot; ${date}</div>
+      </div>
+      <button class="lib-btn lib-load" onclick="loadFromLibrary(${item.id})">Load</button>
+      <button class="lib-btn lib-rename" onclick="renameCollection(${item.id})">Rename</button>
+      <button class="lib-btn lib-del" onclick="deleteFromLibrary(${item.id})">Delete</button>
+    `;
+    list.appendChild(div);
+  }
 }
 
 function escapeHtml(s) {
@@ -1576,10 +1855,8 @@ function escapeHtml(s) {
 }
 
 function loadFromLibrary(id) {
-  if (!db) return;
-  const req = db.transaction('collections', 'readonly').objectStore('collections').get(id);
-  req.onsuccess = e => {
-    const item = e.target.result;
+  if (isLoggedIn()) {
+    const item = cloudCollections && cloudCollections.find(c => c.id === id);
     if (!item) return;
     currentPGNRaw = item.pgn;
     parsedGames = parsePGN(item.pgn);
@@ -1589,37 +1866,68 @@ function loadFromLibrary(id) {
     currentMoveSeq = [];
     renderExplorer();
     closeLibrary();
-  };
+  } else {
+    if (!db) return;
+    const req = db.transaction('collections', 'readonly').objectStore('collections').get(id);
+    req.onsuccess = e => {
+      const item = e.target.result;
+      if (!item) return;
+      currentPGNRaw = item.pgn;
+      parsedGames = parsePGN(item.pgn);
+      moveTree = buildMoveTree(parsedGames);
+      renderGameList();
+      document.getElementById('games-panel').classList.add('visible');
+      currentMoveSeq = [];
+      renderExplorer();
+      closeLibrary();
+    };
+  }
 }
 
-function deleteFromLibrary(id) {
+async function deleteFromLibrary(id) {
   if (!confirm('Delete this collection?')) return;
-  dbTx('readwrite', store => {
-    const req = store.delete(id);
-    req.onsuccess = () => renderLibraryList();
-  });
+  if (isLoggedIn()) {
+    cloudCollections = cloudCollections.filter(c => c.id !== id);
+    await pushCloudCollections(cloudCollections);
+    renderCloudList(document.getElementById('library-list'), cloudCollections);
+  } else {
+    dbTx('readwrite', store => {
+      store.delete(id).onsuccess = () => renderLibraryList();
+    });
+  }
 }
 
-function renameCollection(id) {
-  if (!db) return;
-  const labelEl = document.getElementById('lib-label-' + id);
-  const current = labelEl ? labelEl.textContent : '';
-  const newLabel = prompt('Rename collection:', current);
-  if (newLabel === null || !newLabel.trim()) return;
-  const tx = db.transaction('collections', 'readwrite');
-  const store = tx.objectStore('collections');
-  const req = store.get(id);
-  req.onsuccess = e => {
-    const item = e.target.result;
+async function renameCollection(id) {
+  if (isLoggedIn()) {
+    const item = cloudCollections && cloudCollections.find(c => c.id === id);
     if (!item) return;
+    const newLabel = prompt('Rename collection:', item.label);
+    if (newLabel === null || !newLabel.trim()) return;
     item.label = newLabel.trim();
-    store.put(item).onsuccess = () => renderLibraryList();
-  };
+    await pushCloudCollections(cloudCollections);
+    renderCloudList(document.getElementById('library-list'), cloudCollections);
+  } else {
+    if (!db) return;
+    const labelEl = document.getElementById('lib-label-' + id);
+    const current = labelEl ? labelEl.textContent : '';
+    const newLabel = prompt('Rename collection:', current);
+    if (newLabel === null || !newLabel.trim()) return;
+    const tx = db.transaction('collections', 'readwrite');
+    const store = tx.objectStore('collections');
+    const req = store.get(id);
+    req.onsuccess = e => {
+      const item = e.target.result;
+      if (!item) return;
+      item.label = newLabel.trim();
+      store.put(item).onsuccess = () => renderLibraryList();
+    };
+  }
 }
 
 // ── Init ─────────────────────────────────────────────────────
 
 initDB();
+updateLoginUI();
 resetGame();
 </script>
 </body>
