@@ -197,6 +197,51 @@
   .move-token.move-num { color: #555; cursor: default; }
   .move-token[data-idx] { cursor: pointer; }
   .move-token[data-idx]:hover { background: #1e2a50; }
+  .move-token.has-comment::after { content: '·'; color: #4a6fa5; margin-left: 2px; font-weight: bold; }
+
+  /* ── Comment box ── */
+  #move-comment-area {
+    border-top: 1px solid #2a2a4e; padding: 8px;
+    flex-shrink: 0; display: none; flex-direction: column; gap: 4px;
+  }
+  #move-comment-area.visible { display: flex; }
+  #move-comment-label { font-size: 0.72em; color: #666; }
+  #move-comment-input {
+    width: 100%; padding: 5px 7px; border-radius: 4px;
+    border: 1px solid #2a3a5a; background: #0d1526; color: #ccc;
+    font-size: 0.8em; resize: vertical; min-height: 48px; font-family: sans-serif;
+  }
+
+  /* ── Save game modal ── */
+  #save-game-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.75); z-index: 300;
+    align-items: center; justify-content: center;
+  }
+  #save-game-overlay.open { display: flex; }
+  #save-game-modal {
+    background: #16213e; border-radius: 10px;
+    width: 340px; padding: 24px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  #save-game-modal h2 { margin: 0; font-size: 1em; color: #ccc; }
+  #save-game-modal label { font-size: 0.78em; color: #888; }
+  #save-game-label, #save-lib-select {
+    width: 100%; padding: 7px 10px; border-radius: 5px;
+    border: 1px solid #3a4a6a; background: #0d1526; color: #ddd;
+    font-size: 0.85em;
+  }
+  #save-game-error { font-size: 0.78em; color: #e88; min-height: 1em; }
+  #save-game-btns { display: flex; gap: 8px; justify-content: flex-end; }
+  #save-game-btns button {
+    padding: 7px 18px; border: none; border-radius: 5px;
+    cursor: pointer; font-size: 0.85em;
+  }
+  #save-game-cancel { background: #2a2a4e; color: #aaa; }
+  #save-game-cancel:hover { background: #3a3a5e; }
+  #save-game-confirm { background: #4a6fa5; color: #fff; }
+  #save-game-confirm:hover { background: #5a80b8; }
 
   /* ── Explorer panel ── */
   #explorer-panel {
@@ -474,11 +519,13 @@
       <button onclick="gotoMove(viewMoveIdx + 1)" title="Next">&#8594;</button>
       <button onclick="gotoMove(viewPositions.length - 1)" title="Last">&#8677;</button>
       <button onclick="exitViewer()">&#9664; Play</button>
+      <button onclick="openSaveGameModal()">Save</button>
       <button id="engine-toggle" onclick="toggleEngine()">Engine</button>
     </div>
     <div id="play-controls">
       <button onclick="undoMove()">Undo</button>
       <button onclick="resetGame()">New Game</button>
+      <button onclick="openSaveGameModal()">Save</button>
       <button id="engine-toggle-play" onclick="toggleEngine()">Engine</button>
     </div>
   </div>
@@ -487,12 +534,36 @@
   <div id="moves-panel">
     <h3>Moves</h3>
     <div id="moves-list"></div>
+    <div id="move-comment-area">
+      <div id="move-comment-label">Comment</div>
+      <textarea id="move-comment-input" placeholder="Add a comment for this move…" oninput="saveComment()"></textarea>
+    </div>
   </div>
 
   <!-- Opening explorer -->
   <div id="explorer-panel">
     <h3 id="explorer-title">Opening Explorer</h3>
     <div id="explorer-body"></div>
+  </div>
+</div>
+
+<!-- Save game modal -->
+<div id="save-game-overlay" onclick="if(event.target===this)closeSaveGameModal()">
+  <div id="save-game-modal">
+    <h2>Save Game</h2>
+    <div>
+      <label>Game label</label>
+      <input type="text" id="save-game-label" placeholder="e.g. My Sicilian game">
+    </div>
+    <div>
+      <label>Library</label>
+      <select id="save-lib-select"></select>
+    </div>
+    <div id="save-game-error"></div>
+    <div id="save-game-btns">
+      <button id="save-game-cancel" onclick="closeSaveGameModal()">Cancel</button>
+      <button id="save-game-confirm" onclick="doSaveGame()">Save</button>
+    </div>
   </div>
 </div>
 
@@ -670,6 +741,8 @@ function resetGame() {
   board = initBoard();
   turn = 'w'; selected = null; legalMoves = []; history = [];
   enPassant = null; castlingRights = {wK:true,wQ:true,bK:true,bQ:true}; lastMove = null;
+  playedSANs = []; playComments = {};
+  hideCommentBox();
   renderBoard(); updateStatus(); renderPlayMoves(null);
 }
 
@@ -687,9 +760,12 @@ function clickSquare(r, c) {
       board = applyMove(board, selected, move, move);
       turn = turn==='w'?'b':'w';
       lastMove = {from:selected, to:move};
+      playedSANs.push(an);
       appendPlayMove(an, history.length);
       selected = null; legalMoves = [];
-      renderBoard(); updateStatus(); analyzePosition(); return;
+      renderBoard(); updateStatus(); analyzePosition();
+      showCommentBox(playedSANs.length - 1, playComments, false);
+      return;
     }
     selected = null; legalMoves = [];
   }
@@ -706,11 +782,15 @@ function undoMove() {
   board=prev.board; turn=prev.turn; enPassant=prev.enPassant;
   castlingRights=prev.castlingRights; lastMove=prev.lastMove;
   selected=null; legalMoves=[];
+  const removed = playedSANs.pop();
+  if (removed !== undefined) delete playComments[playedSANs.length];
   renderBoard(); updateStatus(); analyzePosition();
   // remove last token(s) from moves list
   const list = document.getElementById('moves-list');
   if (list.lastChild) list.removeChild(list.lastChild);
   if (list.lastChild?.classList.contains('move-num')) list.removeChild(list.lastChild);
+  if (playedSANs.length > 0) showCommentBox(playedSANs.length - 1, playComments, false);
+  else hideCommentBox();
 }
 
 function updateStatus() {
@@ -752,6 +832,10 @@ let parsedGames = [];
 let viewPositions = [];
 let viewMoveIdx = 0;
 let viewGameMoves = [];
+let viewGameComments = {}; // moveIdx → comment string
+let currentGameIdx = -1;
+let playedSANs = [];
+let playComments = {};
 
 function loadPGN(event) {
   const file = event.target.files[0];
@@ -998,19 +1082,24 @@ function detectResult(raw) {
 }
 
 function openGame(idx) {
-  // Mark active
   document.querySelectorAll('.game-item').forEach((el,i) => el.classList.toggle('active', i===idx));
 
+  currentGameIdx = idx;
   viewPositions = replayGame(idx);
   viewGameMoves = parsedGames[idx].moves;
   viewMode = true;
   viewMoveIdx = 0;
 
+  // Extract comments from raw PGN move text
+  viewGameComments = {};
+  const withComments = parseMoveTextWithComments(parsedGames[idx].raw);
+  withComments.forEach((m, i) => { if (m.comment) viewGameComments[i] = m.comment; });
+
   document.getElementById('nav-controls').classList.add('visible');
   document.getElementById('play-controls').style.display = 'none';
 
   renderViewMoveList();
-  gotoMove(0); // start from beginning
+  gotoMove(0);
 }
 
 function gotoMove(idx) {
@@ -1032,14 +1121,15 @@ function gotoMove(idx) {
   });
 
   renderBoard();
-  // Scroll move into view
   const cur = document.querySelector('.move-token.current');
   if (cur) cur.scrollIntoView({block:'nearest'});
 
-  // Update explorer for current position
   currentMoveSeq = viewGameMoves.slice(0, idx).map(s => s.replace(/[+#!?]/g,''));
   renderExplorer();
   analyzePosition();
+
+  if (idx > 0) showCommentBox(idx - 1, viewGameComments, true);
+  else hideCommentBox();
 }
 
 function renderViewMoveList() {
@@ -1055,8 +1145,9 @@ function renderViewMoveList() {
     }
     const el = document.createElement('span');
     el.className = 'move-token '+(isWhite?'white-move':'black-move');
-    el.textContent = san.replace(/[+#!?]/g,'') + (isWhite ? '' : '');
-    el.dataset.idx = i; // clicking moves to position after this move (idx = i+1)
+    if (viewGameComments[i]) el.classList.add('has-comment');
+    el.textContent = san.replace(/[+#!?]/g,'');
+    el.dataset.idx = i;
     el.onclick = () => gotoMove(i+1);
     list.appendChild(el);
   });
@@ -1820,6 +1911,144 @@ function renameCollection(id) {
     item.label = newLabel.trim();
     store.put(item).onsuccess = () => renderLibraryList();
   };
+}
+
+// ── Commentary ───────────────────────────────────────────────
+
+let _commentMoveIdx = -1;
+let _commentSource = null; // reference to viewGameComments or playComments
+let _commentIsViewer = false;
+
+function showCommentBox(moveIdx, commentsObj, isViewer) {
+  _commentMoveIdx = moveIdx;
+  _commentSource = commentsObj;
+  _commentIsViewer = isViewer;
+  const area = document.getElementById('move-comment-area');
+  const input = document.getElementById('move-comment-input');
+  const label = document.getElementById('move-comment-label');
+  area.classList.add('visible');
+  const moveNum = Math.floor(moveIdx / 2) + 1;
+  const side = moveIdx % 2 === 0 ? 'White' : 'Black';
+  label.textContent = `Comment after ${moveNum}. ${side}`;
+  input.value = commentsObj[moveIdx] || '';
+}
+
+function hideCommentBox() {
+  document.getElementById('move-comment-area').classList.remove('visible');
+  _commentMoveIdx = -1;
+}
+
+function saveComment() {
+  if (_commentMoveIdx < 0 || !_commentSource) return;
+  const val = document.getElementById('move-comment-input').value;
+  if (val.trim()) {
+    _commentSource[_commentMoveIdx] = val;
+  } else {
+    delete _commentSource[_commentMoveIdx];
+  }
+  // Update indicator dot in move list
+  const el = document.querySelector(`.move-token[data-idx="${_commentMoveIdx}"]`);
+  if (el) el.classList.toggle('has-comment', !!val.trim());
+}
+
+// ── PGN commentary parsing ────────────────────────────────────
+
+function parseMoveTextWithComments(text) {
+  text = text.replace(/\([^)]*\)/g, ''); // strip variations
+  const result = [];
+  const re = /\{[^}]*\}|\S+/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const t = m[0];
+    if (t.startsWith('{')) {
+      if (result.length > 0) result[result.length - 1].comment = t.slice(1, -1).trim();
+    } else if (/^\d+\.+$/.test(t) || /^(1-0|0-1|1\/2-1\/2|\*)$/.test(t)) {
+      // skip move numbers and results
+    } else {
+      const move = t.replace(/[+#!?]/g, '');
+      if (move) result.push({ san: move, comment: '' });
+    }
+  }
+  return result;
+}
+
+// ── Serialize game to PGN ─────────────────────────────────────
+
+function serializeGameToPGN(moves, comments, headers) {
+  let pgn = '';
+  for (const [k, v] of Object.entries(headers || {})) {
+    pgn += `[${k} "${v}"]\n`;
+  }
+  if (pgn) pgn += '\n';
+  for (let i = 0; i < moves.length; i++) {
+    if (i % 2 === 0) pgn += `${Math.floor(i / 2) + 1}. `;
+    pgn += moves[i];
+    const c = comments[i];
+    if (c && c.trim()) pgn += ` { ${c.trim().replace(/[{}]/g, '')} }`;
+    pgn += ' ';
+  }
+  pgn += '*';
+  return pgn.trim();
+}
+
+// ── Save game modal ───────────────────────────────────────────
+
+function openSaveGameModal() {
+  if (!isLoggedIn()) { openLoginModal(); return; }
+  const moves = viewMode ? viewGameMoves : playedSANs;
+  if (!moves.length) return;
+
+  document.getElementById('save-game-label').value = '';
+  document.getElementById('save-game-error').textContent = '';
+
+  const sel = document.getElementById('save-lib-select');
+  sel.innerHTML = '<option value="__new__">+ New library…</option>';
+  if (db) {
+    db.transaction('collections', 'readonly').objectStore('collections').getAll().onsuccess = e => {
+      for (const lib of e.target.result.reverse()) {
+        const opt = document.createElement('option');
+        opt.value = lib.id;
+        opt.textContent = lib.label;
+        sel.appendChild(opt);
+      }
+    };
+  }
+  document.getElementById('save-game-overlay').classList.add('open');
+}
+
+function closeSaveGameModal() {
+  document.getElementById('save-game-overlay').classList.remove('open');
+}
+
+function doSaveGame() {
+  const label = document.getElementById('save-game-label').value.trim();
+  if (!label) { document.getElementById('save-game-error').textContent = 'Enter a label.'; return; }
+
+  const moves = viewMode ? viewGameMoves : playedSANs;
+  const comments = viewMode ? viewGameComments : playComments;
+  const headers = viewMode && currentGameIdx >= 0 ? parsedGames[currentGameIdx].headers : {};
+  const gamePGN = serializeGameToPGN(moves, comments, headers);
+  const libVal = document.getElementById('save-lib-select').value;
+
+  if (libVal === '__new__') {
+    const entry = { label, pgn: gamePGN, gameCount: 1, createdAt: Date.now() };
+    dbTx('readwrite', store => {
+      store.add(entry).onsuccess = () => { closeSaveGameModal(); alert(`Saved to new library "${label}".`); };
+    });
+  } else {
+    const id = Number(libVal);
+    const tx = db.transaction('collections', 'readwrite');
+    tx.objectStore('collections').get(id).onsuccess = e => {
+      const lib = e.target.result;
+      if (!lib) return;
+      lib.pgn = lib.pgn.trim() + '\n\n' + gamePGN;
+      lib.gameCount += 1;
+      tx.objectStore('collections').put(lib).onsuccess = () => {
+        closeSaveGameModal();
+        alert(`Saved to "${lib.label}".`);
+      };
+    };
+  }
 }
 
 // ── Init ─────────────────────────────────────────────────────
