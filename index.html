@@ -3,6 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <title>Chess</title>
+<script>
+  if (/\/dev(\/|$)/.test(location.pathname)) {
+    document.addEventListener('DOMContentLoaded', () => {
+      const b = document.createElement('div');
+      b.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#7a3a00;color:#ffd;text-align:center;font-size:0.75em;padding:3px;z-index:9999;letter-spacing:1px;';
+      b.textContent = 'DEV';
+      document.body.prepend(b);
+    });
+  }
+</script>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   body {
