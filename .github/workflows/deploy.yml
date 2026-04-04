@@ -34,9 +34,14 @@ jobs:
 
       - name: Build site
         run: |
+          set -e
           mkdir -p _site/dev
-          cp main-src/index.html main-src/stockfish-18-lite-single.js main-src/stockfish-18-lite-single.wasm _site/
-          cp dev-src/index.html dev-src/stockfish-18-lite-single.js dev-src/stockfish-18-lite-single.wasm _site/dev/
+          cp -r main-src/. _site/
+          rm -rf _site/.git _site/.github _site/.claude _site/main-src _site/dev-src
+          cp -r dev-src/. _site/dev/
+          rm -rf _site/dev/.git _site/dev/.github _site/dev/.claude _site/dev/main-src _site/dev/dev-src
+          echo "=== _site ===" && ls _site
+          echo "=== _site/dev ===" && ls _site/dev
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
