@@ -735,11 +735,12 @@ function updateCastlingRights(cr, b, from) {
 
 let board, turn, selected, legalMoves, history, enPassant, castlingRights, lastMove;
 let viewMode = false;
+let redoStack = [];
 
 function resetGame() {
   exitViewer();
   board = initBoard();
-  turn = 'w'; selected = null; legalMoves = []; history = [];
+  turn = 'w'; selected = null; legalMoves = []; history = []; redoStack = [];
   enPassant = null; castlingRights = {wK:true,wQ:true,bK:true,bQ:true}; lastMove = null;
   playedSANs = []; playComments = {};
   hideCommentBox();
@@ -795,6 +796,7 @@ function clickSquare(r, c) {
       board = applyMove(board, selected, move, move);
       turn = turn==='w'?'b':'w';
       lastMove = {from:selected, to:move};
+      redoStack = [];
       playedSANs.push(an);
       appendPlayMove(an, history.length);
       selected = null; legalMoves = [];
@@ -813,6 +815,8 @@ function clickSquare(r, c) {
 
 function undoMove() {
   if (!history.length) return;
+  redoStack.push({board: board.map(r=>[...r]), turn, enPassant, castlingRights:{...castlingRights}, lastMove,
+                  san: playedSANs[playedSANs.length-1], comment: playComments[playedSANs.length-1]});
   const prev = history.pop();
   board=prev.board; turn=prev.turn; enPassant=prev.enPassant;
   castlingRights=prev.castlingRights; lastMove=prev.lastMove;
@@ -820,12 +824,25 @@ function undoMove() {
   const removed = playedSANs.pop();
   if (removed !== undefined) delete playComments[playedSANs.length];
   renderBoard(); updateStatus(); analyzePosition();
-  // remove last token(s) from moves list
   const list = document.getElementById('moves-list');
   if (list.lastChild) list.removeChild(list.lastChild);
   if (list.lastChild?.classList.contains('move-num')) list.removeChild(list.lastChild);
   if (playedSANs.length > 0) showCommentBox(playedSANs.length - 1, playComments, false);
   else hideCommentBox();
+}
+
+function redoMove() {
+  if (!redoStack.length) return;
+  const next = redoStack.pop();
+  history.push({board: board.map(r=>[...r]), turn, enPassant, castlingRights:{...castlingRights}, lastMove});
+  board=next.board; turn=next.turn; enPassant=next.enPassant;
+  castlingRights=next.castlingRights; lastMove=next.lastMove;
+  playedSANs.push(next.san);
+  if (next.comment) playComments[playedSANs.length-1] = next.comment;
+  selected=null; legalMoves=[];
+  appendPlayMove(next.san, history.length);
+  renderBoard(); updateStatus(); analyzePosition();
+  showCommentBox(playedSANs.length - 1, playComments, false);
 }
 
 function updateStatus() {
@@ -1288,7 +1305,8 @@ document.addEventListener('keydown', e => {
     if (e.key==='ArrowUp')    gotoFirst();
     if (e.key==='ArrowDown')  gotoMainLineEnd();
   } else {
-    if (e.key==='ArrowLeft') undoMove();
+    if (e.key==='ArrowLeft')  undoMove();
+    if (e.key==='ArrowRight') redoMove();
   }
 });
 
