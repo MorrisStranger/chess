@@ -1277,12 +1277,19 @@ function renderBoard() {
 // ── Keyboard navigation ──────────────────────────────────────
 
 document.addEventListener('keydown', e => {
-  if (!viewMode) return;
-  if (document.activeElement && document.activeElement.tagName === 'TEXTAREA') return;
-  if (e.key==='ArrowLeft')  { e.preventDefault(); gotoPrev(); }
-  if (e.key==='ArrowRight') { e.preventDefault(); gotoNext(); }
-  if (e.key==='ArrowUp')    { e.preventDefault(); gotoFirst(); }
-  if (e.key==='ArrowDown')  { e.preventDefault(); gotoMainLineEnd(); }
+  const tag = document.activeElement && document.activeElement.tagName;
+  if (tag === 'TEXTAREA' || tag === 'INPUT') return;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    e.preventDefault();
+  }
+  if (viewMode) {
+    if (e.key==='ArrowLeft')  gotoPrev();
+    if (e.key==='ArrowRight') gotoNext();
+    if (e.key==='ArrowUp')    gotoFirst();
+    if (e.key==='ArrowDown')  gotoMainLineEnd();
+  } else {
+    if (e.key==='ArrowLeft') undoMove();
+  }
 });
 
 // ── Chess engine (Stockfish 18 NNUE) ─────────────────────────
