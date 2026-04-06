@@ -179,12 +179,12 @@
     overflow-y: auto;
     flex: 1;
     padding: 8px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px;
-    align-content: flex-start;
     font-size: 0.88em;
+    display: block;
   }
+  .move-run { display: flex; flex-wrap: wrap; gap: 2px; align-items: baseline; margin-bottom: 1px; }
+  .var-block { margin: 2px 0 2px 10px; padding-left: 6px; border-left: 2px solid #2a3a5a; }
+  .var-paren { color: #556; font-size: 0.85em; padding: 0 1px; }
   .move-token {
     padding: 2px 5px;
     border-radius: 3px;
@@ -514,10 +514,10 @@
       <div id="eval-depth">depth —</div>
     </div>
     <div id="nav-controls">
-      <button onclick="gotoMove(0)" title="First">&#8676;</button>
-      <button onclick="gotoMove(viewMoveIdx - 1)" title="Prev">&#8592;</button>
-      <button onclick="gotoMove(viewMoveIdx + 1)" title="Next">&#8594;</button>
-      <button onclick="gotoMove(viewPositions.length - 1)" title="Last">&#8677;</button>
+      <button onclick="gotoFirst()" title="First">&#8676;</button>
+      <button onclick="gotoPrev()" title="Prev">&#8592;</button>
+      <button onclick="gotoNext()" title="Next">&#8594;</button>
+      <button onclick="gotoMainLineEnd()" title="Last">&#8677;</button>
       <button onclick="exitViewer()">&#9664; Play</button>
       <button onclick="openSaveGameModal()">Save</button>
       <button id="engine-toggle" onclick="toggleEngine()">Engine</button>
@@ -747,7 +747,42 @@ function resetGame() {
 }
 
 function clickSquare(r, c) {
-  if (viewMode) return;
+  if (viewMode) {
+    if (selected) {
+      const move = legalMoves.find(m => m.r===r && m.c===c);
+      if (move) {
+        const from = selected;
+        const an = toAN(from, move, board, move);
+        // Follow existing child if the move is already in the tree
+        const existing = currentNode.children.find(ch =>
+          ch.san.replace(/[+#!?]/g,'') === an.replace(/[+#!?]/g,'')
+        );
+        if (existing) { selected = null; legalMoves = []; gotoNode(existing); return; }
+        // Create new variation
+        const newEp = type(board[from.r][from.c])==='P' && Math.abs(move.r-from.r)===2
+                      ? [(from.r+move.r)>>1, from.c] : null;
+        const newCr = updateCastlingRights(currentNode.cr, board, from);
+        const newBoard = applyMove(board, from, move, move);
+        const newTurn = currentNode.turn === 'w' ? 'b' : 'w';
+        const newNode = makeTreeNode(an, currentNode, newBoard, newTurn, newEp, newCr, {from, to:move});
+        currentNode.children.push(newNode);
+        selected = null; legalMoves = [];
+        renderMoveTree();
+        gotoNode(newNode);
+        return;
+      }
+      selected = null; legalMoves = []; renderBoard(); return;
+    }
+    const nodeTurn = currentNode ? currentNode.turn : 'w';
+    if (board[r][c] && color(board[r][c]) === nodeTurn) {
+      selected = {r, c};
+      legalMoves = legalMovesFor(board, r, c,
+        currentNode ? currentNode.ep : null,
+        currentNode ? currentNode.cr : {wK:true,wQ:true,bK:true,bQ:true});
+      renderBoard();
+    }
+    return;
+  }
   if (selected) {
     const move = legalMoves.find(m => m.r===r && m.c===c);
     if (move) {
@@ -829,10 +864,8 @@ function appendPlayMove(an, totalHalfMoves) {
 // ── PGN loading & parsing ────────────────────────────────────
 
 let parsedGames = [];
-let viewPositions = [];
-let viewMoveIdx = 0;
-let viewGameMoves = [];
-let viewGameComments = {}; // moveIdx → comment string
+let gameRoot = null;    // root of the move tree
+let currentNode = null; // current position in the tree
 let currentGameIdx = -1;
 let playedSANs = [];
 let playComments = {};
@@ -1083,81 +1116,131 @@ function detectResult(raw) {
 
 function openGame(idx) {
   document.querySelectorAll('.game-item').forEach((el,i) => el.classList.toggle('active', i===idx));
-
   currentGameIdx = idx;
-  viewPositions = replayGame(idx);
-  viewGameMoves = parsedGames[idx].moves;
+  gameRoot = buildGameTree(idx);
+  currentNode = gameRoot;
   viewMode = true;
-  viewMoveIdx = 0;
-
-  // Extract comments from raw PGN move text
-  viewGameComments = {};
-  const withComments = parseMoveTextWithComments(parsedGames[idx].raw);
-  withComments.forEach((m, i) => { if (m.comment) viewGameComments[i] = m.comment; });
-
   document.getElementById('nav-controls').classList.add('visible');
   document.getElementById('play-controls').style.display = 'none';
-
-  renderViewMoveList();
-  gotoMove(0);
+  renderMoveTree();
+  gotoNode(gameRoot);
 }
 
-function gotoMove(idx) {
-  if (!viewMode) return;
-  idx = Math.max(0, Math.min(viewPositions.length-1, idx));
-  viewMoveIdx = idx;
-  const pos = viewPositions[idx];
-  board = pos.board;
-  lastMove = pos.lastMove;
+function gotoNode(node) {
+  if (!viewMode || !node) return;
+  currentNode = node;
+  board = node.board.map(r => [...r]);
+  enPassant = node.ep;
+  castlingRights = node.cr;
+  lastMove = node.lastMove;
 
-  // Update status
-  const name = pos.turn==='w'?'White':'Black';
-  document.getElementById('status').textContent =
-    idx === viewPositions.length-1 ? 'Game end' : `${name} to move`;
+  const name = node.turn === 'w' ? 'White' : 'Black';
+  document.getElementById('status').textContent = node.san ? `${name} to move` : 'Starting position';
 
-  // Highlight current move in list
-  document.querySelectorAll('.move-token[data-idx]').forEach(el => {
-    el.classList.toggle('current', parseInt(el.dataset.idx) === idx-1);
+  // Highlight current token
+  document.querySelectorAll('.move-token').forEach(el => {
+    el.classList.toggle('current', el._node === node);
   });
 
   renderBoard();
   const cur = document.querySelector('.move-token.current');
   if (cur) cur.scrollIntoView({block:'nearest'});
 
-  currentMoveSeq = viewGameMoves.slice(0, idx).map(s => s.replace(/[+#!?]/g,''));
+  // Build move sequence for explorer (walk from root to node)
+  const seq = [];
+  let n = node;
+  while (n.san) { seq.unshift(n.san.replace(/[+#!?]/g,'')); n = n.parent; }
+  currentMoveSeq = seq;
   renderExplorer();
   analyzePosition();
 
-  if (idx > 0) showCommentBox(idx - 1, viewGameComments, true);
+  if (node.san) showCommentBoxForNode(node);
   else hideCommentBox();
 }
 
-function renderViewMoveList() {
+function gotoFirst() { if (gameRoot) gotoNode(gameRoot); }
+function gotoPrev()  { if (currentNode && currentNode.parent) gotoNode(currentNode.parent); }
+function gotoNext()  { if (currentNode && currentNode.children.length) gotoNode(currentNode.children[0]); }
+function gotoMainLineEnd() {
+  let n = currentNode || gameRoot;
+  while (n && n.children.length) n = n.children[0];
+  if (n) gotoNode(n);
+}
+
+function renderMoveTree() {
   const list = document.getElementById('moves-list');
   list.innerHTML = '';
-  viewGameMoves.forEach((san, i) => {
-    const isWhite = i % 2 === 0;
-    if (isWhite) {
-      const num = document.createElement('span');
-      num.className = 'move-token move-num';
-      num.textContent = (Math.floor(i/2)+1)+'.';
-      list.appendChild(num);
-    }
-    const el = document.createElement('span');
-    el.className = 'move-token '+(isWhite?'white-move':'black-move');
-    if (viewGameComments[i]) el.classList.add('has-comment');
-    el.textContent = san.replace(/[+#!?]/g,'');
-    el.dataset.idx = i;
-    el.onclick = () => gotoMove(i+1);
-    list.appendChild(el);
-  });
+  if (!gameRoot || !gameRoot.children.length) return;
+  renderTreeLine(gameRoot.children[0], list, 0, true);
 }
+
+function renderTreeLine(startNode, container, depth, showFirstNum) {
+  let runDiv = null;
+  let afterVar = showFirstNum;
+
+  function ensureRun() {
+    if (!runDiv) {
+      runDiv = document.createElement('div');
+      runDiv.className = 'move-run';
+      container.appendChild(runDiv);
+    }
+  }
+
+  let node = startNode;
+  while (node) {
+    ensureRun();
+    const ply = getNodePly(node);
+    const isWhite = ply % 2 === 0;
+    const moveNum = Math.floor(ply / 2) + 1;
+
+    if (isWhite || afterVar) {
+      const numEl = document.createElement('span');
+      numEl.className = 'move-token move-num';
+      numEl.textContent = isWhite ? `${moveNum}.` : `${moveNum}...`;
+      runDiv.appendChild(numEl);
+    }
+    afterVar = false;
+
+    const moveEl = document.createElement('span');
+    moveEl.className = `move-token ${isWhite ? 'white-move' : 'black-move'}`;
+    if (node.comment && node.comment.trim()) moveEl.classList.add('has-comment');
+    if (node === currentNode) moveEl.classList.add('current');
+    moveEl.textContent = node.san.replace(/[+#!?]/g, '');
+    moveEl._node = node;
+    moveEl.onclick = () => gotoNode(node);
+    runDiv.appendChild(moveEl);
+
+    // Render variations (children[1+])
+    for (let i = 1; i < node.children.length; i++) {
+      const varBlock = document.createElement('div');
+      varBlock.className = 'var-block';
+      container.appendChild(varBlock);
+      const open = document.createElement('span');
+      open.className = 'var-paren'; open.textContent = '(';
+      varBlock.appendChild(open);
+      renderTreeLine(node.children[i], varBlock, depth + 1, true);
+      const close = document.createElement('span');
+      close.className = 'var-paren'; close.textContent = ')';
+      varBlock.appendChild(close);
+      runDiv = null;
+      afterVar = true;
+    }
+
+    node = node.children[0];
+  }
+}
+
+// Legacy stub so any remaining calls don't crash
+function renderViewMoveList() { renderMoveTree(); }
 
 function exitViewer() {
   viewMode = false;
+  gameRoot = null; currentNode = null;
+  selected = null; legalMoves = [];
   document.getElementById('nav-controls').classList.remove('visible');
   document.getElementById('play-controls').style.display = '';
   document.querySelectorAll('.game-item').forEach(el=>el.classList.remove('active'));
+  hideCommentBox();
 }
 
 // ── Rendering ────────────────────────────────────────────────
@@ -1195,10 +1278,11 @@ function renderBoard() {
 
 document.addEventListener('keydown', e => {
   if (!viewMode) return;
-  if (e.key==='ArrowLeft')  gotoMove(viewMoveIdx-1);
-  if (e.key==='ArrowRight') gotoMove(viewMoveIdx+1);
-  if (e.key==='ArrowUp')    gotoMove(0);
-  if (e.key==='ArrowDown')  gotoMove(viewPositions.length-1);
+  if (document.activeElement && document.activeElement.tagName === 'TEXTAREA') return;
+  if (e.key==='ArrowLeft')  { e.preventDefault(); gotoPrev(); }
+  if (e.key==='ArrowRight') { e.preventDefault(); gotoNext(); }
+  if (e.key==='ArrowUp')    { e.preventDefault(); gotoFirst(); }
+  if (e.key==='ArrowDown')  { e.preventDefault(); gotoMainLineEnd(); }
 });
 
 // ── Chess engine (Stockfish 18 NNUE) ─────────────────────────
@@ -2036,40 +2120,81 @@ function renameCollection(id) {
 
 // ── Commentary ───────────────────────────────────────────────
 
-let _commentMoveIdx = -1;
-let _commentSource = null; // reference to viewGameComments or playComments
-let _commentIsViewer = false;
+let _commentNode = null; // tree node whose comment is being edited (viewer)
+let _commentPlayIdx = -1; // play mode: index into playComments
 
-function showCommentBox(moveIdx, commentsObj, isViewer) {
-  _commentMoveIdx = moveIdx;
-  _commentSource = commentsObj;
-  _commentIsViewer = isViewer;
-  const area = document.getElementById('move-comment-area');
-  const input = document.getElementById('move-comment-input');
-  const label = document.getElementById('move-comment-label');
-  area.classList.add('visible');
+function showCommentBoxForNode(node) {
+  _commentNode = node;
+  _commentPlayIdx = -1;
+  const ply = getNodePly(node);
+  const moveNum = Math.floor(ply / 2) + 1;
+  const side = ply % 2 === 0 ? 'White' : 'Black';
+  document.getElementById('move-comment-label').textContent = `Comment after ${moveNum}. ${side}`;
+  document.getElementById('move-comment-input').value = node.comment || '';
+  document.getElementById('move-comment-area').classList.add('visible');
+}
+
+function showCommentBox(moveIdx, commentsObj, _ignored) {
+  _commentNode = null;
+  _commentPlayIdx = moveIdx;
   const moveNum = Math.floor(moveIdx / 2) + 1;
   const side = moveIdx % 2 === 0 ? 'White' : 'Black';
-  label.textContent = `Comment after ${moveNum}. ${side}`;
-  input.value = commentsObj[moveIdx] || '';
+  document.getElementById('move-comment-label').textContent = `Comment after ${moveNum}. ${side}`;
+  document.getElementById('move-comment-input').value = commentsObj[moveIdx] || '';
+  document.getElementById('move-comment-area').classList.add('visible');
 }
 
 function hideCommentBox() {
   document.getElementById('move-comment-area').classList.remove('visible');
-  _commentMoveIdx = -1;
+  _commentNode = null;
+  _commentPlayIdx = -1;
 }
 
 function saveComment() {
-  if (_commentMoveIdx < 0 || !_commentSource) return;
   const val = document.getElementById('move-comment-input').value;
-  if (val.trim()) {
-    _commentSource[_commentMoveIdx] = val;
-  } else {
-    delete _commentSource[_commentMoveIdx];
+  if (_commentNode) {
+    _commentNode.comment = val;
+    // Update dot on the move token
+    document.querySelectorAll('.move-token').forEach(el => {
+      if (el._node === _commentNode) el.classList.toggle('has-comment', !!val.trim());
+    });
+  } else if (_commentPlayIdx >= 0) {
+    if (val.trim()) playComments[_commentPlayIdx] = val;
+    else delete playComments[_commentPlayIdx];
   }
-  // Update indicator dot in move list
-  const el = document.querySelector(`.move-token[data-idx="${_commentMoveIdx}"]`);
-  if (el) el.classList.toggle('has-comment', !!val.trim());
+}
+
+// ── Move tree ────────────────────────────────────────────────
+
+function makeTreeNode(san, parent, board, turn, ep, cr, lastMove) {
+  return { san, comment: '', parent, children: [], board: board.map(r=>[...r]), turn, ep, cr:{...cr}, lastMove };
+}
+
+function getNodePly(node) {
+  let ply = 0, n = node;
+  while (n.parent) { ply++; n = n.parent; }
+  return ply - 1; // 0-indexed: first move = ply 0
+}
+
+function buildGameTree(gameIdx) {
+  const root = makeTreeNode(null, null, initBoard(), 'w', null, {wK:true,wQ:true,bK:true,bQ:true}, null);
+  const withComments = parseMoveTextWithComments(parsedGames[gameIdx].raw);
+  let cur = root;
+  let b = initBoard(), t = 'w', ep = null, cr = {wK:true,wQ:true,bK:true,bQ:true};
+  for (const {san, comment} of withComments) {
+    const result = parseSANWithState(b, t, san, ep, cr);
+    if (!result) break;
+    const {from, to, extra} = result;
+    ep = type(b[from.r][from.c])==='P' && Math.abs(to.r-from.r)===2 ? [(from.r+to.r)>>1,from.c] : null;
+    cr = updateCastlingRights(cr, b, from);
+    b = applyMove(b, from, to, extra);
+    t = t==='w'?'b':'w';
+    const node = makeTreeNode(san, cur, b, t, ep, cr, {from, to});
+    node.comment = comment;
+    cur.children.push(node);
+    cur = node;
+  }
+  return root;
 }
 
 // ── PGN commentary parsing ────────────────────────────────────
@@ -2095,21 +2220,50 @@ function parseMoveTextWithComments(text) {
 
 // ── Serialize game to PGN ─────────────────────────────────────
 
+function serializeTreeToPGN(root, headers) {
+  let pgn = '';
+  for (const [k, v] of Object.entries(headers || {})) pgn += `[${k} "${v}"]\n`;
+  if (pgn) pgn += '\n';
+  pgn += serializeLine(root, true);
+  return (pgn.trim() + ' *').trim();
+}
+
+function serializeLine(parentNode, isFirstInLine) {
+  if (!parentNode.children.length) return '';
+  let result = '';
+  let cur = parentNode.children[0];
+  let needNum = isFirstInLine;
+  while (cur) {
+    const ply = getNodePly(cur);
+    const isWhite = ply % 2 === 0;
+    const moveNum = Math.floor(ply / 2) + 1;
+    if (isWhite || needNum) result += isWhite ? `${moveNum}. ` : `${moveNum}... `;
+    needNum = false;
+    result += cur.san;
+    if (cur.comment && cur.comment.trim()) result += ` { ${cur.comment.trim().replace(/[{}]/g,'')} }`;
+    result += ' ';
+    for (let i = 1; i < cur.children.length; i++) {
+      result += '( ' + serializeLine({children:[cur.children[i]]}, true) + ' ) ';
+      needNum = true;
+    }
+    cur = cur.children[0];
+  }
+  return result.trim();
+}
+
+// Legacy helper for play mode (flat moves array)
 function serializeGameToPGN(moves, comments, headers) {
   let pgn = '';
-  for (const [k, v] of Object.entries(headers || {})) {
-    pgn += `[${k} "${v}"]\n`;
-  }
+  for (const [k, v] of Object.entries(headers || {})) pgn += `[${k} "${v}"]\n`;
   if (pgn) pgn += '\n';
   for (let i = 0; i < moves.length; i++) {
-    if (i % 2 === 0) pgn += `${Math.floor(i / 2) + 1}. `;
+    if (i % 2 === 0) pgn += `${Math.floor(i/2)+1}. `;
     pgn += moves[i];
     const c = comments[i];
-    if (c && c.trim()) pgn += ` { ${c.trim().replace(/[{}]/g, '')} }`;
+    if (c && c.trim()) pgn += ` { ${c.trim().replace(/[{}]/g,'')} }`;
     pgn += ' ';
   }
-  pgn += '*';
-  return pgn.trim();
+  return (pgn.trim() + ' *').trim();
 }
 
 // ── Save game modal ───────────────────────────────────────────
@@ -2145,10 +2299,13 @@ function doSaveGame() {
   const label = document.getElementById('save-game-label').value.trim();
   if (!label) { document.getElementById('save-game-error').textContent = 'Enter a label.'; return; }
 
-  const moves = viewMode ? viewGameMoves : playedSANs;
-  const comments = viewMode ? viewGameComments : playComments;
-  const headers = viewMode && currentGameIdx >= 0 ? parsedGames[currentGameIdx].headers : {};
-  const gamePGN = serializeGameToPGN(moves, comments, headers);
+  let gamePGN;
+  if (viewMode && gameRoot) {
+    const headers = currentGameIdx >= 0 ? parsedGames[currentGameIdx].headers : {};
+    gamePGN = serializeTreeToPGN(gameRoot, headers);
+  } else {
+    gamePGN = serializeGameToPGN(playedSANs, playComments, {});
+  }
   const libVal = document.getElementById('save-lib-select').value;
 
   if (libVal === '__new__') {
