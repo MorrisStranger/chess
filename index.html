@@ -1253,9 +1253,9 @@ function renderBoard() {
   for (let r=0;r<8;r++) for (let c=0;c<8;c++) {
     const sq = document.createElement('div');
     sq.className = 'square '+((r+c)%2===0?'light':'dark');
-    if (!viewMode && selected && selected.r===r && selected.c===c) sq.classList.add('selected');
+    if (selected && selected.r===r && selected.c===c) sq.classList.add('selected');
     if (lastMove && ((lastMove.from.r===r&&lastMove.from.c===c)||(lastMove.to.r===r&&lastMove.to.c===c))) sq.classList.add('last-move');
-    if (!viewMode && legalSet.has(r+','+c)) sq.classList.add(board[r][c]?'legal-capture':'legal-move');
+    if (legalSet.has(r+','+c)) sq.classList.add(board[r][c]?'legal-capture':'legal-move');
     if (board[r][c]) {
       const span = document.createElement('span');
       span.textContent = PIECES[board[r][c]];
